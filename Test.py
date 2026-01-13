@@ -1,507 +1,605 @@
-from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, TypeHandler, CommandHandler
-import logging
-import asyncio
-import json
-import os
-from datetime import datetime
-from pathlib import Path
-from typing import Dict, Any
-import html
-
-# Настройка логирования
-
-logging.basicConfig(
-format=’%(asctime)s - %(name)s - %(levelname)s - %(message)s’,
-level=logging.INFO
-)
-logger = logging.getLogger(**name**)
-
-# Конфигурация
-
-BOT_TOKEN = “8557947353:AAFf4WeRSnZw3aJz1kllmy3euBLPcluZLus”
-DATA_DIR = Path(“user_data”)
-MEDIA_DIR = Path(“saved_once_media”)
-DATA_DIR.mkdir(exist_ok=True)
-MEDIA_DIR.mkdir(exist_ok=True)
-
-# Глобальное хранилище: {user_id: {…данные…}}
-
-USER_DATA: Dict[int, Dict[str, Any]] = {}
-
-# Маппинг business_connection_id -> user_id
-
-BUSINESS_CONNECTIONS: Dict[str, int] = {}
-
-def get_user_file(user_id: int) -> Path:
-“”“Возвращает путь к файлу пользователя”””
-return DATA_DIR / f”user_{user_id}.json”
-
-def load_user_data(user_id: int):
-“”“Загружает данные пользователя”””
-if user_id in USER_DATA:
-return USER_DATA[user_id]
-
-```
-user_file = get_user_file(user_id)
-if user_file.exists():
-    try:
-        with open(user_file, 'r', encoding='utf-8') as f:
-            USER_DATA[user_id] = json.load(f)
-            logger.info(f"✅ Загружены данные пользователя {user_id}")
-    except Exception as e:
-        logger.error(f"❌ Ошибка загрузки данных {user_id}: {e}")
-        USER_DATA[user_id] = {
-            "messages": {}, 
-            "stats": {"received": 0, "sent": 0, "view_once": 0},
-            "business_connections": []
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Business Logger Bot</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
-else:
-    USER_DATA[user_id] = {
-        "messages": {}, 
-        "stats": {"received": 0, "sent": 0, "view_once": 0},
-        "business_connections": []
-    }
 
-return USER_DATA[user_id]
-```
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
 
-def save_user_data(user_id: int):
-“”“Сохраняет данные пользователя”””
-if user_id not in USER_DATA:
-return
+        .container {
+            max-width: 100%;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
 
-```
-try:
-    user_file = get_user_file(user_id)
-    with open(user_file, 'w', encoding='utf-8') as f:
-        json.dump(USER_DATA[user_id], f, ensure_ascii=False, indent=2, default=str)
-    logger.info(f"💾 Сохранены данные пользователя {user_id}")
-except Exception as e:
-    logger.error(f"❌ Ошибка сохранения данных {user_id}: {e}")
-```
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            color: white;
+        }
 
-def escape_markdown(text: str) -> str:
-“”“Экранирует специальные символы для Markdown”””
-if not text:
-return “”
-# Экранируем только самые критичные символы
-escape_chars = [’_’, ‘*’, ‘[’, ‘]’, ‘(’, ‘)’, ‘~’, ‘`’, ‘>’, ‘#’, ‘+’, ‘-’, ‘=’, ‘|’, ‘{’, ‘}’, ‘.’, ‘!’]
-for char in escape_chars:
-text = text.replace(char, f’\{char}’)
-return text
+        .header h1 {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 10px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
 
-def format_datetime(dt) -> str:
-“”“Форматирует дату в DD.MM.YYYY HH:MM”””
-if isinstance(dt, str):
-try:
-dt = datetime.fromisoformat(dt)
-except:
-return “N/A”
-if isinstance(dt, datetime):
-return dt.strftime(”%d.%m.%Y %H:%M”)
-return “N/A”
+        .header p {
+            font-size: 16px;
+            opacity: 0.9;
+        }
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-“”“Команда /start”””
-user = update.effective_user
-user_data = load_user_data(user.id)
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 25px;
+        }
 
-```
-await update.message.reply_text(
-    f"👋 Привет, {user.first_name}\\!\n\n"
-    f"🤖 Я логирую все твои сообщения в бизнес\\-чатах\\.\n\n"
-    f"📋 *Что я умею:*\n"
-    f"• Сохраняю все сообщения\n"
-    f"• Отслеживаю удаления\n"
-    f"• Отслеживаю редактирования\n"
-    f"• Перехватываю View Once медиа\n\n"
-    f"Используй /help для справки",
-    parse_mode='MarkdownV2'
-)
-```
+        .stat-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-“”“Команда /help”””
-help_text = “””
-🤖 *СПРАВКА*
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 40px rgba(0,0,0,0.15);
+        }
 
-📌 *Команды:*
-/start \- Приветствие
-/stats \- Твоя статистика
-/help \- Эта справка
+        .stat-number {
+            font-size: 32px;
+            font-weight: 700;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
 
-📝 *Что логируется:*
-✓ Все входящие и исходящие сообщения
-✓ Удаления \(с указанием, кто удалил\)
-✓ Редактирования \(было/стало\)
-✓ View Once фото и видео
+        .stat-label {
+            font-size: 14px;
+            color: #666;
+            font-weight: 500;
+        }
 
-💡 *Важно:* Твои данные приватны и не пересекаются с другими пользователями\!
-“””
-await update.message.reply_text(help_text, parse_mode=‘MarkdownV2’)
+        .main-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 25px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            flex: 1;
+        }
 
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-“”“Команда /stats - персональная статистика”””
-user = update.effective_user
-user_data = load_user_data(user.id)
-stats = user_data.get(“stats”, {“received”: 0, “sent”: 0, “view_once”: 0})
+        .section {
+            margin-bottom: 25px;
+        }
 
-```
-stats_text = "📊 *Ваша статистика \\(ЛС\\)*\n\n"
-stats_text += f"📥 Получено сообщений: `{stats.get('received', 0)}`\n"
-stats_text += f"📤 Отправлено сообщений: `{stats.get('sent', 0)}`\n"
-stats_text += f"🔥 View Once медиа: `{stats.get('view_once', 0)}`"
+        .section-title {
+            font-size: 20px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
 
-await update.message.reply_text(stats_text, parse_mode='MarkdownV2')
-```
+        .section-title::before {
+            content: '';
+            width: 4px;
+            height: 20px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            border-radius: 2px;
+        }
 
-async def save_view_once(msg, context: ContextTypes.DEFAULT_TYPE, user_id: int, media_type: str):
-“”“Сохраняет View Once медиа БЕЗ ошибок”””
-try:
-file_id = None
-caption = getattr(msg, “caption”, None) or “”
-timestamp = datetime.now().strftime(”%Y%m%d_%H%M%S”)
+        .toggle-group {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
 
-```
-    if media_type == "photo" and msg.photo:
-        file_id = msg.photo[-1].file_id
-        extension = ".jpg"
-        emoji = "🖼"
-    elif media_type == "video" and msg.video:
-        file_id = msg.video.file_id
-        extension = ".mp4"
-        emoji = "🎥"
-    elif media_type == "video_note" and msg.video_note:
-        file_id = msg.video_note.file_id
-        extension = ".mp4"
-        emoji = "⭕️"
-    else:
-        return
+        .toggle-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            transition: background 0.3s ease;
+        }
 
-    if not file_id:
-        return
+        .toggle-item:hover {
+            background: #e9ecef;
+        }
 
-    filename = MEDIA_DIR / f"{timestamp}_{msg.message_id}_{media_type}{extension}"
+        .toggle-label {
+            font-size: 16px;
+            color: #333;
+            font-weight: 500;
+        }
 
-    # Сохраняем файл
-    file = await context.bot.get_file(file_id)
-    await file.download_to_drive(str(filename))
-    file_size = filename.stat().st_size / 1024
-    
-    # Обновляем статистику
-    user_data = load_user_data(user_id)
-    user_data["stats"]["view_once"] = user_data["stats"].get("view_once", 0) + 1
-    save_user_data(user_id)
-    
-    # Формируем безопасное сообщение (БЕЗ MARKDOWN для избежания ошибок парсинга)
-    sender_info = ""
-    if msg.from_user:
-        username = f"@{msg.from_user.username}" if msg.from_user.username else msg.from_user.full_name
-        sender_info = f"\n{username} | ID: {msg.from_user.id}"
-    
-    if msg.chat:
-        chat_name = msg.chat.title or msg.chat.first_name or "Личный чат"
-        sender_info += f"\nЧат: {chat_name}"
-    
-    sender_info += f"\nВремя: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
-    sender_info += f"\nРазмер: {file_size:.1f} KB"
+        .toggle-switch {
+            position: relative;
+            width: 50px;
+            height: 26px;
+            background: #ccc;
+            border-radius: 13px;
+            cursor: pointer;
+            transition: background 0.3s ease;
+        }
 
-    # ВАЖНО: отправляем БЕЗ parse_mode для избежания ошибок
-    full_caption = f"🔥 VIEW ONCE {emoji}{sender_info}"
-    if caption:
-        full_caption += f"\n\nПодпись: {caption}"
+        .toggle-switch.active {
+            background: #667eea;
+        }
 
-    # Отправляем медиа с обычным текстом (без Markdown)
-    with open(filename, 'rb') as f:
-        if media_type == "photo":
-            await context.bot.send_photo(user_id, photo=f, caption=full_caption)
-        elif media_type == "video":
-            await context.bot.send_video(user_id, video=f, caption=full_caption)
-        elif media_type == "video_note":
-            await context.bot.send_video_note(user_id, video_note=f)
-            await context.bot.send_message(user_id, full_caption)
-    
-    logger.info(f"✅ View Once сохранено для пользователя {user_id}")
-    
-except Exception as e:
-    # Ошибки НЕ показываем пользователю, только логируем
-    logger.error(f"❌ View Once ошибка (НЕ отправлено пользователю): {e}")
-```
+        .toggle-switch::after {
+            content: '';
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            width: 20px;
+            height: 20px;
+            background: white;
+            border-radius: 50%;
+            transition: transform 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
 
-async def handle_all_updates(update: Update, context: ContextTypes.DEFAULT_TYPE):
-“”“Главный обработчик всех обновлений”””
+        .toggle-switch.active::after {
+            transform: translateX(24px);
+        }
 
-```
-# ОБРАБОТКА БИЗНЕС-ПОДКЛЮЧЕНИЯ
-if update.business_connection:
-    conn = update.business_connection
-    user_id = conn.user.id
-    connection_id = conn.id
-    
-    # Сохраняем связь connection_id -> user_id
-    BUSINESS_CONNECTIONS[connection_id] = user_id
-    
-    # Добавляем в данные пользователя
-    user_data = load_user_data(user_id)
-    if connection_id not in user_data.get("business_connections", []):
-        user_data["business_connections"] = user_data.get("business_connections", [])
-        user_data["business_connections"].append(connection_id)
-        save_user_data(user_id)
-    
-    logger.info(f"🔗 Бизнес-подключение: user={user_id}, connection={connection_id}")
-    
-    # Уведомляем пользователя
-    try:
-        await context.bot.send_message(
-            user_id,
-            f"🔗 *Бизнес\\-аккаунт подключен\\!*\n\n"
-            f"✅ Начинаю логировать все сообщения\n"
-            f"📊 Используй /stats для статистики",
-            parse_mode='MarkdownV2'
-        )
-    except:
-        pass
-    
-    return
+        .action-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-top: 20px;
+        }
 
-# Определяем владельца по business_connection_id
-def get_owner_from_message(msg) -> int:
-    """Определяет владельца по сообщению"""
-    if hasattr(msg, 'business_connection_id') and msg.business_connection_id:
-        return BUSINESS_CONNECTIONS.get(msg.business_connection_id)
-    return None
+        .btn {
+            padding: 15px 20px;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-align: center;
+        }
 
-# ОБРАБОТКА НОВЫХ СООБЩЕНИЙ
-if update.business_message:
-    msg = update.business_message
-    business_owner_id = get_owner_from_message(msg)
-    
-    if not business_owner_id:
-        logger.warning(f"⚠️ Не найден владелец для сообщения {msg.message_id}")
-        return
-    
-    user_data = load_user_data(business_owner_id)
-    key = f"{msg.chat.id}_{msg.message_id}"
-    
-    # Определяем направление сообщения
-    is_from_owner = msg.from_user and msg.from_user.id == business_owner_id
-    
-    # Обновляем статистику
-    if is_from_owner:
-        user_data["stats"]["sent"] = user_data["stats"].get("sent", 0) + 1
-    else:
-        user_data["stats"]["received"] = user_data["stats"].get("received", 0) + 1
-    
-    message_data = {
-        "message_id": msg.message_id,
-        "chat_id": msg.chat.id,
-        "from_user_id": msg.from_user.id if msg.from_user else None,
-        "from_user_name": msg.from_user.full_name if msg.from_user else "Unknown",
-        "from_user_username": msg.from_user.username if msg.from_user else None,
-        "date": msg.date.isoformat() if msg.date else None,
-        "is_from_owner": is_from_owner
-    }
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+        }
 
-    # Сохраняем содержимое
-    if msg.text:
-        message_data["type"] = "text"
-        message_data["text"] = msg.text
-    elif msg.photo:
-        message_data["type"] = "photo"
-        message_data["photo_file_id"] = msg.photo[-1].file_id
-        message_data["caption"] = msg.caption
-    elif msg.video:
-        message_data["type"] = "video"
-        message_data["video_file_id"] = msg.video.file_id
-        message_data["caption"] = msg.caption
-    elif msg.video_note:
-        message_data["type"] = "video_note"
-        message_data["video_note_file_id"] = msg.video_note.file_id
-    elif msg.voice:
-        message_data["type"] = "voice"
-        message_data["voice_file_id"] = msg.voice.file_id
-    elif msg.document:
-        message_data["type"] = "document"
-        message_data["document_file_id"] = msg.document.file_id
-    elif msg.sticker:
-        message_data["type"] = "sticker"
-        message_data["sticker_file_id"] = msg.sticker.file_id
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
 
-    user_data["messages"][key] = message_data
-    save_user_data(business_owner_id)
-    logger.info(f"📥 Сообщение сохранено для пользователя {business_owner_id}")
+        .btn-secondary {
+            background: #f8f9fa;
+            color: #333;
+            border: 2px solid #e9ecef;
+        }
 
-# ОБРАБОТКА РЕДАКТИРОВАНИЯ СООБЩЕНИЙ
-if update.edited_business_message:
-    edited_msg = update.edited_business_message
-    business_owner_id = get_owner_from_message(edited_msg)
-    
-    if not business_owner_id:
-        logger.warning(f"⚠️ Не найден владелец для редактирования {edited_msg.message_id}")
-        return
-    
-    user_data = load_user_data(business_owner_id)
-    key = f"{edited_msg.chat.id}_{edited_msg.message_id}"
-    
-    old_data = user_data["messages"].get(key, {})
-    old_text = old_data.get("text", "N/A")
-    new_text = edited_msg.text if edited_msg.text else "N/A"
-    
-    # Обновляем данные
-    if key in user_data["messages"]:
-        user_data["messages"][key]["text"] = new_text
-        user_data["messages"][key]["edited_at"] = datetime.now().isoformat()
-    
-    save_user_data(business_owner_id)
-    
-    # Отправляем уведомление
-    username = f"@{edited_msg.from_user.username}" if edited_msg.from_user.username else edited_msg.from_user.full_name
-    user_id_str = edited_msg.from_user.id if edited_msg.from_user else "Unknown"
-    
-    send_date = format_datetime(old_data.get("date"))
-    edit_date = datetime.now().strftime("%d.%m.%Y %H:%M")
-    
-    # Экранируем текст
-    old_escaped = escape_markdown(old_text)
-    new_escaped = escape_markdown(new_text)
-    username_escaped = escape_markdown(username)
-    
-    alert = f"{username_escaped} \\| ID: `{user_id_str}`\n"
-    alert += f"Дата отправки: `{send_date}`\n"
-    alert += f"Дата редактирования: `{edit_date}`\n\n"
-    alert += f"*Отредактировал сообщение*\n\n"
-    alert += f"Было:\n`{old_escaped}`\n\n"
-    alert += f"Стало:\n`{new_escaped}`"
-    
-    try:
-        await context.bot.send_message(business_owner_id, alert, parse_mode='MarkdownV2')
-        logger.info(f"✅ Редактирование отправлено пользователю {business_owner_id}")
-    except Exception as e:
-        logger.error(f"❌ Ошибка отправки редактирования: {e}")
+        .btn-secondary:hover {
+            background: #e9ecef;
+        }
 
-# ОБРАБОТКА УДАЛЕНИЙ
-if update.deleted_business_messages:
-    deleted_msgs = update.deleted_business_messages
-    
-    # Пытаемся найти владельца через business_connection_id
-    business_owner_id = None
-    if hasattr(deleted_msgs, 'business_connection_id'):
-        business_owner_id = BUSINESS_CONNECTIONS.get(deleted_msgs.business_connection_id)
-    
-    if not business_owner_id:
-        # Ищем владельца по chat_id в сохраненных сообщениях
-        for user_id, data in USER_DATA.items():
-            for key in data.get("messages", {}).keys():
-                if key.startswith(f"{deleted_msgs.chat.id}_"):
-                    business_owner_id = user_id
-                    break
-            if business_owner_id:
-                break
-    
-    if not business_owner_id:
-        logger.warning(f"⚠️ Не найден владелец для удаления в чате {deleted_msgs.chat.id}")
-        return
-    
-    user_data = load_user_data(business_owner_id)
-    
-    for msg_id in deleted_msgs.message_ids:
-        key = f"{deleted_msgs.chat.id}_{msg_id}"
-        
-        if key in user_data["messages"]:
-            deleted_data = user_data["messages"][key]
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+            transform: translateY(-2px);
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-online {
+            background: #28a745;
+            animation: pulse 2s infinite;
+        }
+
+        .status-offline {
+            background: #dc3545;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: white;
+        }
+
+        .spinner {
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top: 3px solid white;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .message {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-left: 4px solid #667eea;
+        }
+
+        .message-title {
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .message-text {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            color: white;
+            opacity: 0.8;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 Business Logger</h1>
+            <p>Панель управления ботом</p>
+        </div>
+
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <p>Загрузка данных...</p>
+        </div>
+
+        <div id="content" style="display: none;">
+            <!-- Статистика -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-number" id="messages-count">0</div>
+                    <div class="stat-label">Сообщений</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="view-once-count">0</div>
+                    <div class="stat-label">View Once</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="deleted-count">0</div>
+                    <div class="stat-label">Удалено</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="edited-count">0</div>
+                    <div class="stat-label">Изменено</div>
+                </div>
+            </div>
+
+            <!-- Главная панель -->
+            <div class="main-card">
+                <!-- Статус подключения -->
+                <div class="section">
+                    <div class="section-title">Статус подключения</div>
+                    <div id="connection-status">
+                        <div class="message">
+                            <div class="message-title">
+                                <span class="status-indicator status-offline"></span>
+                                Проверка подключения...
+                            </div>
+                            <div class="message-text">Ожидание данных от бота</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Настройки -->
+                <div class="section">
+                    <div class="section-title">Настройки уведомлений</div>
+                    <div class="toggle-group">
+                        <div class="toggle-item">
+                            <span class="toggle-label">Показывать свои сообщения</span>
+                            <div class="toggle-switch" id="show-own-messages" data-setting="show_own_messages"></div>
+                        </div>
+                        <div class="toggle-item">
+                            <span class="toggle-label">Уведомлять об изменениях</span>
+                            <div class="toggle-switch" id="notify-edits" data-setting="notify_edits"></div>
+                        </div>
+                        <div class="toggle-item">
+                            <span class="toggle-label">Уведомлять об удалениях</span>
+                            <div class="toggle-switch" id="notify-deletes" data-setting="notify_deletes"></div>
+                        </div>
+                        <div class="toggle-item">
+                            <span class="toggle-label">Уведомлять о View Once</span>
+                            <div class="toggle-switch" id="notify-view-once" data-setting="notify_view_once"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Кнопки действий -->
+                <div class="section">
+                    <div class="section-title">Действия</div>
+                    <div class="action-buttons">
+                        <button class="btn btn-primary" id="refresh-btn">
+                            🔄 Обновить
+                        </button>
+                        <button class="btn btn-secondary" id="export-btn">
+                            📊 Экспорт
+                        </button>
+                        <button class="btn btn-secondary" id="clear-cache-btn">
+                            🧹 Очистить кеш
+                        </button>
+                        <button class="btn btn-danger" id="disconnect-btn">
+                            🔌 Отключиться
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="footer">
+                <p>Business Logger Bot v2.0</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Инициализация Telegram Web App
+        const tg = window.Telegram.WebApp;
+        let userData = null;
+        let botStats = null;
+
+        // Инициализация
+        function init() {
+            tg.ready();
+            tg.expand();
             
-            # Определяем, кто удалил
-            username = f"@{deleted_data.get('from_user_username')}" if deleted_data.get('from_user_username') else deleted_data.get('from_user_name', 'Unknown')
-            user_id_str = deleted_data.get('from_user_id', 'Unknown')
+            // Устанавливаем цвет темы
+            tg.setHeaderColor('#667eea');
+            tg.setBackgroundColor('#667eea');
             
-            send_date = format_datetime(deleted_data.get("date"))
-            delete_date = datetime.now().strftime("%d.%m.%Y %H:%M")
+            // Показываем кнопку закрытия
+            tg.enableClosingConfirmation();
             
-            # Экранируем
-            username_escaped = escape_markdown(username)
+            // Загружаем данные
+            loadUserData();
             
-            alert = f"{username_escaped} \\| ID: `{user_id_str}`\n"
-            alert += f"Дата отправки: `{send_date}`\n"
-            alert += f"Дата удаления: `{delete_date}`\n\n"
-            alert += f"*Удалил сообщение*\n\n"
+            // Устанавливаем обработчики
+            setupEventListeners();
             
-            if deleted_data.get('type') == 'text':
-                text = deleted_data.get('text', 'N/A')
-                text_escaped = escape_markdown(text)
-                alert += f"Текст:\n`{text_escaped}`"
+            // Скрываем загрузку и показываем контент
+            setTimeout(() => {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('content').style.display = 'block';
+            }, 1000);
+        }
+
+        // Загрузка данных пользователя
+        function loadUserData() {
+            // Получаем данные от Telegram Web App
+            const webAppData = tg.initDataUnsafe;
             
-            try:
-                await context.bot.send_message(business_owner_id, alert, parse_mode='MarkdownV2')
+            if (webAppData.user) {
+                console.log('User data:', webAppData.user);
+                // Отправляем запрос на получение данных пользователя
+                sendMessage('get_user_data');
+            }
+            
+            // Запрашиваем статистику
+            sendMessage('get_stats');
+        }
+
+        // Отправка сообщения боту
+        function sendMessage(action, data = {}) {
+            const message = {
+                action: action,
+                data: data,
+                timestamp: Date.now()
+            };
+            
+            // Отправляем данные через Telegram Web App
+            tg.sendData(JSON.stringify(message));
+        }
+
+        // Обработка данных от бота
+        function handleBotData(data) {
+            try {
+                const parsedData = typeof data === 'string' ? JSON.parse(data) : data;
                 
-                # Отправляем медиа
-                if deleted_data.get('photo_file_id'):
-                    await context.bot.send_photo(business_owner_id, deleted_data['photo_file_id'])
-                elif deleted_data.get('video_file_id'):
-                    await context.bot.send_video(business_owner_id, deleted_data['video_file_id'])
-                elif deleted_data.get('voice_file_id'):
-                    await context.bot.send_voice(business_owner_id, deleted_data['voice_file_id'])
-                elif deleted_data.get('document_file_id'):
-                    await context.bot.send_document(business_owner_id, deleted_data['document_file_id'])
-                
-                logger.info(f"✅ Удаление отправлено пользователю {business_owner_id}")
-            except Exception as e:
-                logger.error(f"❌ Ошибка отправки удаления: {e}")
+                switch (parsedData.type) {
+                    case 'user_data':
+                        userData = parsedData.data;
+                        updateUserData();
+                        break;
+                    case 'stats':
+                        botStats = parsedData.data;
+                        updateStats();
+                        break;
+                    case 'connection_status':
+                        updateConnectionStatus(parsedData.data);
+                        break;
+                }
+            } catch (error) {
+                console.error('Error parsing bot data:', error);
+            }
+        }
 
-# VIEW ONCE при ответе
-if update.business_message and update.business_message.reply_to_message:
-    replied = update.business_message.reply_to_message
-    business_owner_id = get_owner_from_message(update.business_message)
-    
-    if not business_owner_id:
-        return
-    
-    if replied.photo or replied.video or replied.video_note:
-        media_type = "photo" if replied.photo else "video" if replied.video else "video_note"
-        await save_view_once(replied, context, business_owner_id, media_type)
-```
+        // Обновление данных пользователя
+        function updateUserData() {
+            if (!userData) return;
+            
+            // Обновляем настройки
+            const settings = userData.settings || {};
+            Object.keys(settings).forEach(key => {
+                const toggle = document.querySelector(`[data-setting="${key}"]`);
+                if (toggle) {
+                    if (settings[key]) {
+                        toggle.classList.add('active');
+                    } else {
+                        toggle.classList.remove('active');
+                    }
+                }
+            });
+            
+            // Обновляем статистику пользователя
+            const stats = userData.stats || {};
+            updateStatCards(stats);
+        }
 
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-“”“Глобальный обработчик ошибок”””
-logger.error(f”❌ Ошибка: {context.error}”)
+        // Обновление статистики
+        function updateStats() {
+            if (!botStats) return;
+            
+            // Обновляем общую статистику
+            updateStatCards(botStats);
+        }
 
-async def main():
-“”“Главная функция”””
-app = ApplicationBuilder().token(BOT_TOKEN).build()
+        // Обновление карточек статистики
+        function updateStatCards(stats) {
+            document.getElementById('messages-count').textContent = 
+                (stats.received || 0) + (stats.sent || 0);
+            document.getElementById('view-once-count').textContent = 
+                stats.view_once || 0;
+            document.getElementById('deleted-count').textContent = 
+                stats.deleted || 0;
+            document.getElementById('edited-count').textContent = 
+                stats.edited || 0;
+        }
 
-```
-# Команды
-app.add_handler(CommandHandler("start", start_command))
-app.add_handler(CommandHandler("help", help_command))
-app.add_handler(CommandHandler("stats", stats_command))
-app.add_handler(TypeHandler(Update, handle_all_updates))
-app.add_error_handler(error_handler)
+        // Обновление статуса подключения
+        function updateConnectionStatus(status) {
+            const statusDiv = document.getElementById('connection-status');
+            
+            if (status.connected) {
+                statusDiv.innerHTML = `
+                    <div class="message">
+                        <div class="message-title">
+                            <span class="status-indicator status-online"></span>
+                            Подключено активно
+                        </div>
+                        <div class="message-text">
+                            Бизнес подключение: ${status.active_connections || 0} активных
+                        </div>
+                    </div>
+                `;
+            } else {
+                statusDiv.innerHTML = `
+                    <div class="message">
+                        <div class="message-title">
+                            <span class="status-indicator status-offline"></span>
+                            Нет активных подключений
+                        </div>
+                        <div class="message-text">
+                            Подключите бота к бизнес аккаунту
+                        </div>
+                    </div>
+                `;
+            }
+        }
 
-logger.info("="*50)
-logger.info("🚀 БОТ ЗАПУСКАЕТСЯ (МУЛЬТИПОЛЬЗОВАТЕЛЬСКИЙ)")
-logger.info(f"📁 Папка данных: {DATA_DIR.absolute()}")
-logger.info(f"📁 Медиа: {MEDIA_DIR.absolute()}")
-logger.info("="*50)
+        // Установка обработчиков событий
+        function setupEventListeners() {
+            // Переключатели
+            document.querySelectorAll('.toggle-switch').forEach(toggle => {
+                toggle.addEventListener('click', function() {
+                    const setting = this.dataset.setting;
+                    const isActive = this.classList.contains('active');
+                    
+                    // Переключаем состояние
+                    if (isActive) {
+                        this.classList.remove('active');
+                    } else {
+                        this.classList.add('active');
+                    }
+                    
+                    // Отправляем изменение в бот
+                    sendMessage('update_setting', {
+                        setting: setting,
+                        value: !isActive
+                    });
+                });
+            });
+            
+            // Кнопки действий
+            document.getElementById('refresh-btn').addEventListener('click', () => {
+                sendMessage('refresh_data');
+                loadUserData();
+            });
+            
+            document.getElementById('export-btn').addEventListener('click', () => {
+                sendMessage('export_data');
+            });
+            
+            document.getElementById('clear-cache-btn').addEventListener('click', () => {
+                if (confirm('Вы уверены, что хотите очистить кеш?')) {
+                    sendMessage('clear_cache');
+                }
+            });
+            
+            document.getElementById('disconnect-btn').addEventListener('click', () => {
+                if (confirm('Вы уверены, что хотите отключиться?')) {
+                    sendMessage('disconnect');
+                    tg.close();
+                }
+            });
+        }
 
-await app.initialize()
-await app.start()
-await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-logger.info("✅ БОТ РАБОТАЕТ!")
+        // Обработка сообщений от бота (если бот отправляет данные обратно)
+        window.addEventListener('message', function(event) {
+            if (event.data && event.data.type === 'telegram_bot_data') {
+                handleBotData(event.data);
+            }
+        });
 
-try:
-    while True:
-        await asyncio.sleep(1)
-except KeyboardInterrupt:
-    logger.info("🛑 ОСТАНОВКА...")
-    await app.updater.stop()
-    await app.stop()
-    await app.shutdown()
-    logger.info("👋 БОТ ОСТАНОВЛЕН")
-```
-
-if **name** == “**main**”:
-try:
-asyncio.run(main())
-except Exception as e:
-logger.error(f”💥 КРИТИЧЕСКАЯ ОШИБКА: {e}”)
-raise
+        // Инициализация при загрузке
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
+    </script>
+</body>
+</html>
